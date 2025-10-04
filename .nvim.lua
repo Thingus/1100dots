@@ -1,1 +1,6 @@
-vim.keymap.set("n", "<leader>r", "vsplit term://cargo run<CR>", { desc = "Run game, no autoclose" })
+vim.keymap.set(
+	"n",
+	"<leader>r",
+	":FloatermNew --cwd=<root> --autoclose=0 cargo run<CR>",
+	{ desc = "Run game, no autoclose" }
+)

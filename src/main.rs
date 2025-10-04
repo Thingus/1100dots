@@ -19,7 +19,7 @@ fn main() {
                 spawn_electrons,
                 move_electrons,
                 influence_electrons,
-                move_influencer,
+                move_held,
             ),
         )
         .run();
@@ -40,7 +40,7 @@ struct ElectronInfluencer {
 }
 
 #[derive(Component)]
-struct HeldInfluencer;
+struct Held;
 
 #[derive(Component)]
 struct ElectronEmitter {
@@ -76,12 +76,12 @@ fn setup(
             clear_color: ClearColorConfig::Custom(Color::BLACK),
             ..default()
         },
-        Tonemapping::TonyMcMapface, // 1. Using a tonemapper that desaturates to white is recommended
+        Tonemapping::TonyMcMapface,
         Bloom {
             intensity: 0.75,
             ..default()
-        }, // 2. Enable bloom for the camera
-        DebandDither::Enabled,      // Optional: bloom causes gradients which cause banding
+        },
+        DebandDither::Enabled,
     ));
 
     commands.spawn((
@@ -107,6 +107,7 @@ fn setup(
         },
         Mesh2d(influencer_mesh),
         MeshMaterial2d(influencer_material),
+        Held,
     ));
 }
 
@@ -141,12 +142,19 @@ fn move_electrons(query: Query<(&Electron, &mut Transform)>, time: Res<Time>) {
     }
 }
 
-fn move_influencer(
-    mut influencer: Single<&mut Transform, With<HeldInfluencer>>,
+fn move_held(
+    mut influencer: Single<&mut Transform, With<Held>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    camera_bits: Single<(&Camera, &GlobalTransform)>,
 ) {
-    if let Some(position) = window.cursor_position() {
-        influencer.translation = position.extend(3.)
+    let (camera, camera_transform) = camera_bits.into_inner();
+
+    if let Some(position) = window
+        .cursor_position()
+        .and_then(|cursor| Some(camera.viewport_to_world(camera_transform, cursor)))
+        .map(|ray| ray.unwrap().origin.truncate())
+    {
+        influencer.translation = position.extend(3.);
     }
 }
 
