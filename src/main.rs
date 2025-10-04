@@ -94,9 +94,9 @@ fn setup_emitter(
         },
         Transform {
             translation: Vec3::new(-300., -30., 2.),
+            rotation: Quat::from_rotation_z(PI * -0.5),
             ..default()
-        }
-        .rotate_z(PI * 0.5),
+        },
         Mesh2d(emitter_mesh),
         MeshMaterial2d(emitter_material),
     ));
@@ -112,7 +112,7 @@ fn setup_influencer(
 
     commands.spawn((
         ElectronInfluencer {
-            radius: 50.,
+            radius: 150.,
             magnitude: 1.,
         },
         Transform {
@@ -153,15 +153,19 @@ fn spawn_electrons(
 ) {
     let mut rng = rand::rng();
     for (emitter, emitter_transform) in collider_query {
-        let angle = rng.random_range(-emitter.cone_half_angle..emitter.cone_half_angle);
-        let speed = rng.random_range(5.0..100.0);
+        let spray_angle = rng.random_range(-emitter.cone_half_angle..emitter.cone_half_angle);
+        let emitter_angle = emitter_transform.rotation.to_scaled_axis().z;
+        let angle = spray_angle + emitter_angle;
+        // I don't think gimbal lock is real, I think it's a conspiracy by Big Axis to upset me,
+        // specifically.
+        let speed = rng.random_range(75.0..100.0);
         commands.spawn((
             Electron {
                 speed: Speed(speed),
             },
             emitter_transform
                 .with_scale(Vec2::splat(ELECTRON_SIZE).extend(1.))
-                .with_rotation(Quat::from_rotation_z(angle) + emitter_transform.rotation),
+                .with_rotation(Quat::from_scaled_axis(Vec3::new(0., 0., angle))),
             Mesh2d(meshes.add(Circle::default())),
             MeshMaterial2d(materials.add(ELECTRON_COLOR)),
         ));
