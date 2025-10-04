@@ -12,7 +12,10 @@ const ELECTRON_SIZE: f32 = 3.;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_systems(Startup, setup)
+        .add_systems(
+            Startup,
+            (setup, setup_collector, setup_emitter, setup_influencer),
+        )
         .add_systems(
             FixedUpdate,
             (
@@ -20,6 +23,7 @@ fn main() {
                 move_electrons,
                 influence_electrons,
                 move_held,
+                collect_electrons,
             ),
         )
         .run();
@@ -48,28 +52,15 @@ struct ElectronEmitter {
 }
 
 #[derive(Component)]
-struct ElectronCollector;
+struct ElectronCollector {
+    radius: f32,
+}
 
 #[derive(Component)]
 struct Collidable;
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    let emitter_mesh = meshes.add(Triangle2d::new(
-        Vec2::Y * 10.0,
-        Vec2::new(-10.0, -10.0),
-        Vec2::new(10.0, -10.0),
-    ));
-
-    let emitter_material = materials.add(Color::WHITE);
-
-    let influencer_mesh = meshes.add(Circle::new(10.));
-
-    let influencer_material = materials.add(Color::WHITE);
-
+fn setup(mut commands: Commands) {
+    print!("Camera setup");
     commands.spawn((
         Camera2d,
         Camera {
@@ -83,7 +74,20 @@ fn setup(
         },
         DebandDither::Enabled,
     ));
+}
 
+fn setup_emitter(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let emitter_mesh = meshes.add(Triangle2d::new(
+        Vec2::Y * 10.0,
+        Vec2::new(-10.0, -10.0),
+        Vec2::new(10.0, -10.0),
+    ));
+
+    let emitter_material = materials.add(Color::WHITE);
     commands.spawn((
         ElectronEmitter {
             cone_half_angle: 0.1 * PI,
@@ -95,6 +99,15 @@ fn setup(
         Mesh2d(emitter_mesh),
         MeshMaterial2d(emitter_material),
     ));
+}
+fn setup_influencer(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let influencer_mesh = meshes.add(Circle::new(10.));
+
+    let influencer_material = materials.add(Color::WHITE);
 
     commands.spawn((
         ElectronInfluencer {
@@ -107,6 +120,27 @@ fn setup(
         },
         Mesh2d(influencer_mesh),
         MeshMaterial2d(influencer_material),
+        Held,
+    ));
+}
+
+fn setup_collector(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let collector_mesh = meshes.add(Circle::new(10.));
+
+    let collector_material = materials.add(Color::srgb(0., 0., 1.));
+
+    commands.spawn((
+        ElectronCollector { radius: 50. },
+        Transform {
+            translation: Vec3::new(200., 0., 2.),
+            ..default()
+        },
+        Mesh2d(collector_mesh),
+        MeshMaterial2d(collector_material),
         Held,
     ));
 }
@@ -148,12 +182,14 @@ fn move_held(
     camera_bits: Single<(&Camera, &GlobalTransform)>,
 ) {
     let (camera, camera_transform) = camera_bits.into_inner();
+    print!("ADFASFASDFASDFASFADFASDFSAFASf");
 
     if let Some(position) = window
         .cursor_position()
         .and_then(|cursor| Some(camera.viewport_to_world(camera_transform, cursor)))
         .map(|ray| ray.unwrap().origin.truncate())
     {
+        print!("aaaaaaaa");
         influencer.translation = position.extend(3.);
     }
 }
@@ -166,6 +202,23 @@ fn influence_electrons(
         for (influencer, influencer_tf) in influencers {
             if electron_tf.translation.distance(influencer_tf.translation) <= influencer.radius {
                 electron_tf.rotate_z(influencer.magnitude);
+            }
+        }
+    }
+}
+
+fn collect_electrons(
+    electron_position: Query<&mut Transform, (With<Electron>, Without<ElectronCollector>)>,
+    collectors: Query<(&ElectronCollector, &Transform), Without<Electron>>,
+) {
+    for mut electron_tf in electron_position {
+        for (collector, collector_tf) in collectors {
+            if electron_tf.translation.distance(collector_tf.translation) <= collector.radius {
+                let to_collector = (collector_tf.translation - electron_tf.translation)
+                    .xy()
+                    .normalize();
+                let rotate_to_collector = Quat::from_rotation_arc(Vec3::Y, to_collector.extend(0.));
+                electron_tf.rotation = rotate_to_collector;
             }
         }
     }
