@@ -60,7 +60,7 @@ struct ElectronCollector {
 struct Collidable;
 
 fn setup(mut commands: Commands) {
-    print!("Camera setup");
+    info!("Camera setup");
     commands.spawn((
         Camera2d,
         Camera {
@@ -95,7 +95,8 @@ fn setup_emitter(
         Transform {
             translation: Vec3::new(-300., -30., 2.),
             ..default()
-        },
+        }
+        .rotate_z(PI * 0.5),
         Mesh2d(emitter_mesh),
         MeshMaterial2d(emitter_material),
     ));
@@ -141,7 +142,6 @@ fn setup_collector(
         },
         Mesh2d(collector_mesh),
         MeshMaterial2d(collector_material),
-        Held,
     ));
 }
 
@@ -161,7 +161,7 @@ fn spawn_electrons(
             },
             emitter_transform
                 .with_scale(Vec2::splat(ELECTRON_SIZE).extend(1.))
-                .with_rotation(Quat::from_rotation_z(angle)),
+                .with_rotation(Quat::from_rotation_z(angle) + emitter_transform.rotation),
             Mesh2d(meshes.add(Circle::default())),
             MeshMaterial2d(materials.add(ELECTRON_COLOR)),
         ));
@@ -182,26 +182,36 @@ fn move_held(
     camera_bits: Single<(&Camera, &GlobalTransform)>,
 ) {
     let (camera, camera_transform) = camera_bits.into_inner();
-    print!("ADFASFASDFASDFASFADFASDFSAFASf");
 
     if let Some(position) = window
         .cursor_position()
         .and_then(|cursor| Some(camera.viewport_to_world(camera_transform, cursor)))
         .map(|ray| ray.unwrap().origin.truncate())
     {
-        print!("aaaaaaaa");
         influencer.translation = position.extend(3.);
     }
 }
 
 fn influence_electrons(
-    electron_position: Query<&mut Transform, (With<Electron>, Without<ElectronInfluencer>)>,
+    electron_positions: Query<&mut Transform, (With<Electron>, Without<ElectronInfluencer>)>,
     influencers: Query<(&ElectronInfluencer, &Transform), Without<Electron>>,
+    time: Res<Time>,
 ) {
-    for mut electron_tf in electron_position {
+    for mut electron_tf in electron_positions {
         for (influencer, influencer_tf) in influencers {
             if electron_tf.translation.distance(influencer_tf.translation) <= influencer.radius {
-                electron_tf.rotate_z(influencer.magnitude);
+                let electron_forward = (electron_tf.rotation * Vec3::Y).xy();
+                let to_influencer = (influencer_tf.translation - electron_tf.translation)
+                    .xy()
+                    .normalize();
+                let forward_dot_influencer = electron_forward.dot(to_influencer);
+                let electron_right = (electron_tf.rotation * Vec3::X).xy();
+                let right_dot_influencer = electron_right.dot(to_influencer);
+                let rotation_sign = -f32::copysign(1.0, right_dot_influencer);
+                let max_angle = ops::acos(forward_dot_influencer.clamp(-1., 1.));
+                let rotation_angle =
+                    rotation_sign * (influencer.magnitude * time.delta_secs()).min(max_angle);
+                electron_tf.rotate_z(rotation_angle)
             }
         }
     }
