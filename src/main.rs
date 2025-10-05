@@ -1,20 +1,29 @@
 use bevy::{
+    color::palettes::css::{DARK_GREEN, LIGHT_GREEN},
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     post_process::bloom::Bloom,
     prelude::*,
+    sprite_render::Material2d,
     window::PrimaryWindow,
 };
 use rand::Rng;
 use std::f32::consts::PI;
 const ELECTRON_COLOR: Color = Color::srgb(1.0, 0.5, 0.5);
 const ELECTRON_SIZE: f32 = 3.;
+const HOOVER_ROT_SPEED: f32 = PI;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_systems(
             Startup,
-            (setup, setup_collector, setup_emitter, setup_influencer),
+            (
+                setup,
+                setup_collector,
+                setup_emitter,
+                // setup_influencer,
+                setup_hoover,
+            ),
         )
         .add_systems(
             FixedUpdate,
@@ -24,6 +33,8 @@ fn main() {
                 influence_electrons,
                 move_held,
                 collect_electrons,
+                hoover_electrons,
+                rotate_hoover,
             ),
         )
         .run();
@@ -41,6 +52,13 @@ struct Electron {
 struct ElectronInfluencer {
     radius: f32,
     magnitude: f32,
+}
+
+#[derive(Component)]
+struct ElectronHoover {
+    radius: f32,
+    magnitude: f32,
+    collection_half_angle: f32,
 }
 
 #[derive(Component)]
@@ -94,7 +112,6 @@ fn setup_emitter(
         },
         Transform {
             translation: Vec3::new(-300., -30., 2.),
-            rotation: Quat::from_rotation_z(PI * -0.5),
             ..default()
         },
         Mesh2d(emitter_mesh),
@@ -117,10 +134,38 @@ fn setup_influencer(
         },
         Transform {
             translation: Vec3::new(-240., 0., 2.),
+            rotation: Quat::from_rotation_z(PI * 0.5),
             ..default()
         },
         Mesh2d(influencer_mesh),
         MeshMaterial2d(influencer_material),
+    ));
+}
+fn setup_hoover(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let hoover_mesh = meshes.add(Triangle2d::new(
+        Vec2::Y * 20.0,
+        Vec2::new(-10.0, -10.0),
+        Vec2::new(10.0, -10.0),
+    ));
+
+    let hoover_material = materials.add(Color::WHITE);
+
+    commands.spawn((
+        ElectronHoover {
+            radius: 150.,
+            magnitude: 1.,
+            collection_half_angle: 0.25 * PI,
+        },
+        Transform {
+            translation: Vec3::new(-240., 0., 2.),
+            ..default()
+        },
+        Mesh2d(hoover_mesh),
+        MeshMaterial2d(hoover_material),
         Held,
     ));
 }
@@ -204,18 +249,117 @@ fn influence_electrons(
     for mut electron_tf in electron_positions {
         for (influencer, influencer_tf) in influencers {
             if electron_tf.translation.distance(influencer_tf.translation) <= influencer.radius {
-                let electron_forward = (electron_tf.rotation * Vec3::Y).xy();
-                let to_influencer = (influencer_tf.translation - electron_tf.translation)
-                    .xy()
-                    .normalize();
-                let forward_dot_influencer = electron_forward.dot(to_influencer);
-                let electron_right = (electron_tf.rotation * Vec3::X).xy();
-                let right_dot_influencer = electron_right.dot(to_influencer);
-                let rotation_sign = -f32::copysign(1.0, right_dot_influencer);
-                let max_angle = ops::acos(forward_dot_influencer.clamp(-1., 1.));
+                let (max_angle, rotation_sign) = angle_from_y(&electron_tf, influencer_tf);
                 let rotation_angle =
                     rotation_sign * (influencer.magnitude * time.delta_secs()).min(max_angle);
-                electron_tf.rotate_z(rotation_angle)
+                electron_tf.rotate_z(rotation_angle);
+            }
+        }
+    }
+}
+
+// returns the maxiumum angle and direction needed to face electron_tf towards influencer_tf
+fn angle_from_y(electron_tf: &Transform, influencer_tf: &Transform) -> (f32, f32) {
+    let electron_forward = (electron_tf.rotation * Vec3::Y).xy();
+    let to_influencer = (influencer_tf.translation - electron_tf.translation)
+        .xy()
+        .normalize();
+    let forward_dot_influencer = electron_forward.dot(to_influencer);
+    let electron_right = (electron_tf.rotation * Vec3::X).xy();
+    let right_dot_influencer = electron_right.dot(to_influencer);
+    let rotation_sign = -f32::copysign(1.0, right_dot_influencer);
+    let max_angle = ops::acos(forward_dot_influencer.clamp(-1., 1.));
+    (max_angle, rotation_sign)
+}
+
+fn is_clockwise(start: Vec2, end: Vec2) -> bool {
+    -start.x * end.y + start.y * end.x > 0.
+}
+
+fn is_within_rad(p1: Vec2, p2: Vec2, radius: f32) -> bool {
+    p1.distance_squared(p2) < f32::powi(radius, 2)
+}
+
+fn is_within_segment(
+    point: Vec2,
+    center: Vec2,
+    sector_start_angle: f32,
+    sector_end_angle: f32,
+    radius: f32,
+) -> bool {
+    let sector_start_vec = Vec2::new(
+        ops::cos(sector_start_angle + (PI / 2.)),
+        ops::sin(sector_start_angle + (PI / 2.)),
+    )
+    .normalize();
+    let sector_end_vec = Vec2::new(
+        ops::cos(sector_end_angle + (PI / 2.)),
+        ops::sin(sector_end_angle + (PI / 2.)),
+    )
+    .normalize();
+    let rel_vec = point - center;
+    is_clockwise(sector_end_vec, rel_vec)
+        && !is_clockwise(sector_start_vec, rel_vec)
+        && is_within_rad(point, center, radius)
+}
+
+fn rotate_hoover(
+    keys: Res<ButtonInput<KeyCode>>,
+    hoovers: Query<&mut Transform, With<ElectronHoover>>,
+    time: Res<Time>,
+) {
+    for mut hoover in hoovers {
+        if keys.pressed(KeyCode::ArrowLeft) {
+            hoover.rotate_z(HOOVER_ROT_SPEED * time.delta_secs());
+        }
+        if keys.pressed(KeyCode::ArrowRight) {
+            hoover.rotate_z(HOOVER_ROT_SPEED * time.delta_secs() * -1.);
+        }
+    }
+}
+
+fn hoover_electrons(
+    electron_positions: Query<(Entity, &mut Transform), (With<Electron>, Without<ElectronHoover>)>,
+    hoovers: Query<(&ElectronHoover, &Transform), Without<Electron>>,
+    mut commands: Commands,
+    time: Res<Time>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut gizmos: Gizmos,
+) {
+    for (entity, mut electron_tf) in electron_positions {
+        for (hoover, hoover_tf) in hoovers {
+            let electron_point = electron_tf.translation.xy();
+            let hoover_point = hoover_tf.translation.xy();
+            let hoover_facing_angle = hoover_tf.rotation.to_scaled_axis().z;
+            let sector_start_angle = hoover_facing_angle + hoover.collection_half_angle;
+            let sector_end_angle = hoover_facing_angle - hoover.collection_half_angle;
+            // let dbg_start = Vec2::new(ops::cos(sector_start_angle), ops::sin(sector_start_angle));
+            // let dbg_end = Vec2::new(ops::cos(sector_end_angle), ops::sin(sector_end_angle));
+            //
+            // gizmos.arc_2d(
+            //     Isometry2d::new(hoover_point, Rot2::degrees(sector_start_angle)),
+            //     sector_start_angle - sector_end_angle,
+            //     hoover.radius,
+            //     LIGHT_GREEN,
+            // );
+
+            if is_within_segment(
+                electron_point,
+                hoover_point,
+                sector_start_angle,
+                sector_end_angle,
+                hoover.radius,
+            ) {
+                let (max_angle, rotation_sign) = angle_from_y(&electron_tf, hoover_tf);
+                let rotation_angle =
+                    rotation_sign * (hoover.magnitude * time.delta_secs()).min(max_angle);
+                electron_tf.rotate_z(rotation_angle);
+                commands
+                    .entity(entity)
+                    .insert(MeshMaterial2d(materials.add(Color::srgb(0., 1., 0.))));
+            }
+            if is_within_rad(electron_point, hoover_point, 1.) {
+                electron_tf.rotation = hoover_tf.rotation;
             }
         }
     }
