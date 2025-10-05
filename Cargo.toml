@@ -2,6 +2,7 @@
 name = "collector"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 
 [dependencies]
 bevy = "0.17.1"
@@ -14,4 +15,5 @@ opt-level = 1
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]
 opt-level = 3
+
 

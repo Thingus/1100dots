@@ -1,16 +1,20 @@
 use bevy::{
-    color::palettes::css::{DARK_GREEN, LIGHT_GREEN},
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     post_process::bloom::Bloom,
     prelude::*,
-    sprite_render::Material2d,
     window::PrimaryWindow,
 };
-use rand::Rng;
+use rand::prelude::*;
 use std::f32::consts::PI;
 const ELECTRON_COLOR: Color = Color::srgb(1.0, 0.5, 0.5);
 const ELECTRON_SIZE: f32 = 3.;
 const HOOVER_ROT_SPEED: f32 = PI;
+
+// fn rand_range(start: f32, end: f32) -> f32 {
+//     let max = end - start;
+//     let offset = rand64() / u64::MAX;
+//     start + (offset * max as f32)
+// }
 
 fn main() {
     App::new()
@@ -35,10 +39,71 @@ fn main() {
                 collect_electrons,
                 hoover_electrons,
                 rotate_hoover,
+                wobble_wobblers,
             ),
         )
+        .add_observer(on_electron_collected)
+        .init_state::<Levels>()
+        .add_systems(OnEnter(Levels::Level2), setup_influencer)
+        .add_systems(OnEnter(Levels::Level3), wobble_influencer)
+        .add_systems(OnEnter(Levels::Level4), wobble_goal)
+        .add_systems(OnEnter(Levels::Level5), wobble_source)
+        // .add_systems(OnEnter(Levels::Victory), victory_screen)
         .run();
 }
+
+fn wobble_influencer(influencers: Query<Entity, With<ElectronInfluencer>>, mut commands: Commands) {
+    for influencer in influencers {
+        commands.entity(influencer).insert(Wobbler);
+    }
+}
+
+fn wobble_goal(influencers: Query<Entity, With<ElectronCollector>>, mut commands: Commands) {
+    for influencer in influencers {
+        commands.entity(influencer).insert(Wobbler);
+    }
+}
+
+fn wobble_source(influencers: Query<Entity, With<ElectronEmitter>>, mut commands: Commands) {
+    for influencer in influencers {
+        commands.entity(influencer).insert(Wobbler);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
+enum Levels {
+    #[default]
+    Level1,
+    Level2,
+    Level3,
+    Level4,
+    Level5,
+    Victory,
+}
+
+#[derive(Event)]
+struct ElectronCollected;
+
+fn on_electron_collected(
+    _collected: On<ElectronCollected>,
+    mut score: Single<&mut Score>,
+    mut text: Single<&mut Text>,
+    mut next_state: ResMut<NextState<Levels>>,
+) {
+    score.0 += 1;
+    text.0 = score.0.to_string();
+
+    match score.0 {
+        300 => next_state.set(Levels::Level2),
+        500 => next_state.set(Levels::Level3),
+        700 => next_state.set(Levels::Level4),
+        900 => next_state.set(Levels::Level5),
+        _ => {}
+    }
+}
+
+#[derive(Component, Default)]
+struct Score(i32);
 
 #[derive(Component)]
 struct Speed(f32);
@@ -53,6 +118,9 @@ struct ElectronInfluencer {
     radius: f32,
     magnitude: f32,
 }
+
+#[derive(Component)]
+struct Wobbler;
 
 #[derive(Component)]
 struct ElectronHoover {
@@ -91,6 +159,19 @@ fn setup(mut commands: Commands) {
             ..default()
         },
         DebandDither::Enabled,
+    ));
+
+    info!("Score setup");
+    commands.spawn(Score(0));
+
+    commands.spawn((
+        Text::default(),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(12),
+            left: px(12),
+            ..default()
+        },
     ));
 }
 
@@ -157,7 +238,7 @@ fn setup_hoover(
     commands.spawn((
         ElectronHoover {
             radius: 150.,
-            magnitude: 1.,
+            magnitude: 2.,
             collection_half_angle: 0.25 * PI,
         },
         Transform {
@@ -203,6 +284,8 @@ fn spawn_electrons(
         let angle = spray_angle + emitter_angle;
         // I don't think gimbal lock is real, I think it's a conspiracy by Big Axis to upset me,
         // specifically.
+
+        //using time as a prng
         let speed = rng.random_range(75.0..100.0);
         commands.spawn((
             Electron {
@@ -303,16 +386,23 @@ fn is_within_segment(
         && is_within_rad(point, center, radius)
 }
 
+fn wobble_wobblers(wobblies: Query<&mut Transform, With<Wobbler>>, time: Res<Time>) {
+    for mut wobblie in wobblies {
+        let offset = (ops::sin(time.elapsed_secs()) * 3.);
+        wobblie.translation.y += offset;
+    }
+}
+
 fn rotate_hoover(
     keys: Res<ButtonInput<KeyCode>>,
     hoovers: Query<&mut Transform, With<ElectronHoover>>,
     time: Res<Time>,
 ) {
     for mut hoover in hoovers {
-        if keys.pressed(KeyCode::ArrowLeft) {
+        if keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA) {
             hoover.rotate_z(HOOVER_ROT_SPEED * time.delta_secs());
         }
-        if keys.pressed(KeyCode::ArrowRight) {
+        if keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD) {
             hoover.rotate_z(HOOVER_ROT_SPEED * time.delta_secs() * -1.);
         }
     }
@@ -324,7 +414,6 @@ fn hoover_electrons(
     mut commands: Commands,
     time: Res<Time>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut gizmos: Gizmos,
 ) {
     for (entity, mut electron_tf) in electron_positions {
         for (hoover, hoover_tf) in hoovers {
@@ -366,10 +455,15 @@ fn hoover_electrons(
 }
 
 fn collect_electrons(
-    electron_position: Query<&mut Transform, (With<Electron>, Without<ElectronCollector>)>,
+    electron_position: Query<
+        (Entity, &mut Transform),
+        (With<Electron>, Without<ElectronCollector>),
+    >,
     collectors: Query<(&ElectronCollector, &Transform), Without<Electron>>,
+
+    mut commands: Commands,
 ) {
-    for mut electron_tf in electron_position {
+    for (entity, mut electron_tf) in electron_position {
         for (collector, collector_tf) in collectors {
             if electron_tf.translation.distance(collector_tf.translation) <= collector.radius {
                 let to_collector = (collector_tf.translation - electron_tf.translation)
@@ -377,6 +471,10 @@ fn collect_electrons(
                     .normalize();
                 let rotate_to_collector = Quat::from_rotation_arc(Vec3::Y, to_collector.extend(0.));
                 electron_tf.rotation = rotate_to_collector;
+            }
+            if electron_tf.translation.distance(collector_tf.translation) <= 1. {
+                commands.entity(entity).despawn();
+                commands.trigger(ElectronCollected);
             }
         }
     }
