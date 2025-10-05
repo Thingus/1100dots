@@ -48,7 +48,7 @@ fn main() {
         .add_systems(OnEnter(Levels::Level3), wobble_influencer)
         .add_systems(OnEnter(Levels::Level4), wobble_goal)
         .add_systems(OnEnter(Levels::Level5), wobble_source)
-        // .add_systems(OnEnter(Levels::Victory), victory_screen)
+        .add_systems(OnEnter(Levels::Victory), victory_screen)
         .run();
 }
 
@@ -68,6 +68,18 @@ fn wobble_source(influencers: Query<Entity, With<ElectronEmitter>>, mut commands
     for influencer in influencers {
         commands.entity(influencer).insert(Wobbler);
     }
+}
+
+fn victory_screen(mut commands: Commands, time: Res<Time>) {
+    commands.spawn((
+        Text::new("YOU WIN!"),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(500),
+            left: px(500),
+            ..default()
+        },
+    ));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
@@ -98,6 +110,7 @@ fn on_electron_collected(
         500 => next_state.set(Levels::Level3),
         700 => next_state.set(Levels::Level4),
         900 => next_state.set(Levels::Level5),
+        1100 => next_state.set(Levels::Victory),
         _ => {}
     }
 }
