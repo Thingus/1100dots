@@ -10,12 +10,6 @@ const ELECTRON_COLOR: Color = Color::srgb(1.0, 0.5, 0.5);
 const ELECTRON_SIZE: f32 = 3.;
 const HOOVER_ROT_SPEED: f32 = PI;
 
-// fn rand_range(start: f32, end: f32) -> f32 {
-//     let max = end - start;
-//     let offset = rand64() / u64::MAX;
-//     start + (offset * max as f32)
-// }
-
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -32,14 +26,18 @@ fn main() {
         .add_systems(
             FixedUpdate,
             (
+                // (
                 spawn_electrons,
                 move_electrons,
                 influence_electrons,
-                move_held,
                 collect_electrons,
                 hoover_electrons,
+                cleanup_electrons,
+                // )
+                // .after(cleanup_electrons),
                 rotate_hoover,
                 wobble_wobblers,
+                move_held,
             ),
         )
         .add_observer(on_electron_collected)
@@ -468,15 +466,10 @@ fn hoover_electrons(
 }
 
 fn collect_electrons(
-    electron_position: Query<
-        (Entity, &mut Transform),
-        (With<Electron>, Without<ElectronCollector>),
-    >,
+    electron_position: Query<&mut Transform, (With<Electron>, Without<ElectronCollector>)>,
     collectors: Query<(&ElectronCollector, &Transform), Without<Electron>>,
-
-    mut commands: Commands,
 ) {
-    for (entity, mut electron_tf) in electron_position {
+    for mut electron_tf in electron_position {
         for (collector, collector_tf) in collectors {
             if electron_tf.translation.distance(collector_tf.translation) <= collector.radius {
                 let to_collector = (collector_tf.translation - electron_tf.translation)
@@ -485,6 +478,17 @@ fn collect_electrons(
                 let rotate_to_collector = Quat::from_rotation_arc(Vec3::Y, to_collector.extend(0.));
                 electron_tf.rotation = rotate_to_collector;
             }
+        }
+    }
+}
+
+fn cleanup_electrons(
+    electron_position: Query<(Entity, &Transform), (With<Electron>, Without<ElectronCollector>)>,
+    collectors: Query<&Transform, (With<ElectronCollector>, Without<Electron>)>,
+    mut commands: Commands,
+) {
+    for (entity, electron_tf) in electron_position {
+        for collector_tf in collectors {
             if electron_tf.translation.distance(collector_tf.translation) <= 1. {
                 commands.entity(entity).despawn();
                 commands.trigger(ElectronCollected);
