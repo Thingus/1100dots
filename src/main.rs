@@ -31,7 +31,7 @@ fn main() {
                 move_electrons,
                 influence_electrons,
                 collect_electrons,
-                hoover_electrons,
+                hoover_electrons.before(cleanup_electrons),
                 cleanup_electrons,
                 // )
                 // .after(cleanup_electrons),

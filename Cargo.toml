@@ -17,5 +17,3 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
-[target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
